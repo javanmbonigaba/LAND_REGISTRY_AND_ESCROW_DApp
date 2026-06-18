@@ -1,345 +1,535 @@
 // SPDX-License-Identifier: MIT
-// License declaration
+
+// Solidity compiler version
 pragma solidity ^0.8.28;
 
-// Main contract for managing land sales using an escrow mechanism
+// Import LandHistory contract
+// Used to record completed transactions
+import "./LandHistory.sol";
+
+// =====================================================
+// LAND SALE ESCROW CONTRACT
+// =====================================================
+// This contract simulates a land sale process.
+//
+// Actors:
+// 1. Registrar (Admin)
+// 2. Seller (Land Owner)
+// 3. Buyer
+//
+// Workflow:
+// Seller registers land
+// Registrar approves registration
+// Seller lists land for sale
+// Buyer pays for land
+// Registrar approves payment
+// Seller withdraws payment
+// Registrar transfers ownership
+// Transaction recorded in LandHistory
+// =====================================================
+
 contract LandSaleEscrow {
 
-    // Address of the registrar (administrator)
-    // Only this account can approve land sales
-    address public registrar;
 
-    // Counter used to generate unique land IDs
-    uint256 public landCounter;
+// =================================================
+// STATE VARIABLES
+// =================================================
 
-    // Counter used to generate unique transaction IDs
-    uint256 public transactionCounter;
+// Registrar address
+address public registrar;
 
-    // Constructor runs once when the contract is deployed
-    // The deployer becomes the registrar/admin
-    constructor() {
-        registrar = msg.sender;
-    }
+// Counter for land IDs
+uint256 public landCounter;
 
-    // Structure to store land information
-    struct Land {
+// Counter for transaction IDs
+uint256 public transactionCounter;
 
-        // Unique identifier of the land
-        uint256 landId;
+// Reference to LandHistory contract
+LandHistory public historyContract;
 
-        // Physical location of the land
-        string location;
+// Used to prevent duplicate land registration
+mapping(bytes32 => bool) public registeredLands;
 
-        // Size of the land (e.g., square meters)
-        uint256 area;
 
-        // Current owner of the land
-        address owner;
+// =================================================
+// CONSTRUCTOR
+// =================================================
+// Runs only once during deployment
 
-        // Selling price of the land in Wei
-        uint256 price;
+constructor() {
 
-        // Indicates whether the land is available for sale
-        bool forSale;
-    }
+    // Contract deployer becomes registrar
+    registrar = msg.sender;
 
-    // Structure to store information about a sale
-    struct Sale {
+    // Deploy LandHistory contract
+    historyContract = new LandHistory();
+}
 
-        // ID of the land being sold
-        uint256 landId;
 
-        // Seller's wallet address
-        address seller;
+// =================================================
+// LAND STRUCT
+// =================================================
+// Stores land information
 
-        // Buyer's wallet address
-        address buyer;
+struct Land {
 
-        // Amount paid by the buyer
-        uint256 amountPaid;
+    uint256 landId;
 
-        // Indicates whether the registrar approved the sale
-        bool approved;
+    string location;
 
-        // Indicates whether the sale has been completed
-        bool completed;
-    }
+    uint256 area;
 
-    // Structure used to maintain transaction history
-    struct TransactionHistory {
+    address owner;
 
-        // Unique transaction identifier
-        uint256 transactionId;
+    uint256 price;
 
-        // Land involved in the transaction
-        uint256 landId;
+    bool registered;
 
-        // Previous owner of the land
-        address previousOwner;
+    bool approved;
 
-        // New owner after transfer
-        address newOwner;
+    bool forSale;
+}
 
-        // Price paid for the land
-        uint256 salePrice;
 
-        // Timestamp when transaction occurred
-        uint256 timestamp;
-    }
+// =================================================
+// SALE STRUCT
+// =================================================
+// Stores sale information
 
-    // Mapping Land ID => Land Details
-    mapping(uint256 => Land) public lands;
+struct Sale {
 
-    // Mapping Land ID => Sale Details
-    mapping(uint256 => Sale) public sales;
+    uint256 landId;
 
-    // Array storing all completed transactions
-    TransactionHistory[] public transactionHistory;
+    address seller;
 
-    // Event emitted when a new land is registered
-    event LandRegistered(
-        uint256 landId,
-        address owner,
-        string location
+    address buyer;
+
+    uint256 amountPaid;
+
+    bool paymentApproved;
+
+    bool sellerPaid;
+
+    bool ownershipTransferred;
+}
+
+
+// =================================================
+// MAPPINGS
+// =================================================
+
+// landId => Land
+mapping(uint256 => Land) public lands;
+
+// landId => Sale
+mapping(uint256 => Sale) public sales;
+
+
+// =================================================
+// EVENTS
+// =================================================
+
+event LandRegistered(
+    uint256 landId,
+    address owner,
+    string location
+);
+
+event LandApproved(
+    uint256 landId
+);
+
+event LandListed(
+    uint256 landId,
+    uint256 price
+);
+
+event PaymentDeposited(
+    uint256 landId,
+    address buyer,
+    uint256 amount
+);
+
+event PaymentApproved(
+    uint256 landId
+);
+
+event SellerPaid(
+    uint256 landId,
+    uint256 amount
+);
+
+event OwnershipTransferred(
+    uint256 landId,
+    address oldOwner,
+    address newOwner
+);
+
+
+// =================================================
+// MODIFIERS
+// =================================================
+
+// Registrar only
+modifier onlyRegistrar() {
+
+    require(
+        msg.sender == registrar,
+        "Only registrar allowed"
     );
 
-    // Event emitted when land is listed for sale
-    event LandListed(
-        uint256 landId,
-        uint256 price
+    _;
+}
+
+// Land owner only
+modifier onlyLandOwner(
+    uint256 _landId
+) {
+
+    require(
+        lands[_landId].owner ==
+        msg.sender,
+        "Not land owner"
     );
 
-    // Event emitted when buyer deposits payment
-    event PaymentDeposited(
-        uint256 landId,
-        address buyer,
-        uint256 amount
+    _;
+}
+
+
+// =================================================
+// REGISTER LAND
+// =================================================
+
+function registerLand(
+    string memory _location,
+    uint256 _area,
+    uint256 _price
+)
+    public
+{
+    // Generate unique fingerprint
+
+    bytes32 landKey =
+        keccak256(
+            abi.encodePacked(
+                _location,
+                _area,
+                msg.sender
+            )
+        );
+
+    // Prevent duplicate registration
+
+    require(
+        !registeredLands[landKey],
+        "Land already registered"
     );
 
-    // Event emitted when registrar approves a sale
-    event SaleApproved(
-        uint256 landId
+    // Create new land ID
+
+    landCounter++;
+
+    // Store land
+
+    lands[landCounter] = Land({
+
+        landId: landCounter,
+
+        location: _location,
+
+        area: _area,
+
+        owner: msg.sender,
+
+        price: _price,
+
+        registered: true,
+
+        approved: false,
+
+        forSale: false
+    });
+
+    // Mark as registered
+
+    registeredLands[landKey] = true;
+
+    emit LandRegistered(
+        landCounter,
+        msg.sender,
+        _location
+    );
+}
+
+
+// =================================================
+// APPROVE LAND REGISTRATION
+// =================================================
+
+function approveLandRegistration(
+    uint256 _landId
+)
+    public
+    onlyRegistrar
+{
+    require(
+        lands[_landId].registered,
+        "Land not found"
     );
 
-    // Event emitted when ownership changes
-    event OwnershipTransferred(
-        uint256 landId,
-        address oldOwner,
-        address newOwner
+    lands[_landId].approved = true;
+
+    emit LandApproved(
+        _landId
+    );
+}
+
+
+// =================================================
+// LIST LAND FOR SALE
+// =================================================
+
+function listLandForSale(
+    uint256 _landId,
+    uint256 _price
+)
+    public
+    onlyLandOwner(_landId)
+{
+    require(
+        lands[_landId].approved,
+        "Land not approved"
     );
 
-    // Modifier restricting access to registrar only
-    modifier onlyRegistrar() {
+    lands[_landId].forSale = true;
 
-        require(
-            msg.sender == registrar,
-            "Only registrar allowed"
-        );
+    lands[_landId].price = _price;
 
-        _;
-    }
+    emit LandListed(
+        _landId,
+        _price
+    );
+}
 
-    // Modifier ensuring caller owns the specified land
-    modifier onlyLandOwner(uint256 _landId) {
 
-        require(
-            lands[_landId].owner == msg.sender,
-            "Not land owner"
-        );
+// =================================================
+// BUY LAND
+// =================================================
+// Buyer sends ETH to escrow
 
-        _;
-    }
+function buyLand(
+    uint256 _landId
+)
+    public
+    payable
+{
+    Land storage land =
+        lands[_landId];
 
-    // Function used to register a new land
-    function registerLand(
-        string memory _location,
-        uint256 _area,
-        uint256 _price
-    ) public {
+    require(
+        land.forSale,
+        "Land not for sale"
+    );
 
-        // Generate new land ID
-        landCounter++;
+    require(
+        msg.value ==
+        land.price,
+        "Incorrect payment"
+    );
 
-        // Store land information
-        lands[landCounter] = Land({
-            landId: landCounter,
-            location: _location,
-            area: _area,
-            owner: msg.sender,
-            price: _price,
-            forSale: false
-        });
+    sales[_landId] = Sale({
 
-        // Notify blockchain listeners
-        emit LandRegistered(
-            landCounter,
-            msg.sender,
-            _location
-        );
-    }
+        landId: _landId,
 
-    // Function for owner to list land for sale
-    function listLandForSale(
-        uint256 _landId,
-        uint256 _price
-    )
-        public
-        onlyLandOwner(_landId)
-    {
-        // Reference to land record
-        Land storage land = lands[_landId];
+        seller: land.owner,
 
-        // Mark land as available
-        land.forSale = true;
+        buyer: msg.sender,
 
-        // Update sale price
-        land.price = _price;
+        amountPaid: msg.value,
 
-        // Emit event
-        emit LandListed(
-            _landId,
-            _price
-        );
-    }
+        paymentApproved: false,
 
-    // Function allowing buyer to purchase land
-    // payable allows ETH to be sent with transaction
-    function buyLand(
-        uint256 _landId
-    )
-        public
-        payable
-    {
-        // Get land record
-        Land storage land = lands[_landId];
+        sellerPaid: false,
 
-        // Ensure land is listed for sale
-        require(
-            land.forSale,
-            "Land not for sale"
-        );
+        ownershipTransferred: false
+    });
 
-        // Ensure exact payment is made
-        require(
-            msg.value == land.price,
-            "Incorrect payment"
-        );
+    emit PaymentDeposited(
+        _landId,
+        msg.sender,
+        msg.value
+    );
+}
 
-        // Create sale record
-        sales[_landId] = Sale({
-            landId: _landId,
-            seller: land.owner,
-            buyer: msg.sender,
-            amountPaid: msg.value,
-            approved: false,
-            completed: false
-        });
 
-        // Payment remains inside contract (escrow)
-        emit PaymentDeposited(
-            _landId,
-            msg.sender,
-            msg.value
-        );
-    }
+// =================================================
+// APPROVE PAYMENT
+// =================================================
 
-    // Registrar approves the sale
-    function approveSale(
-        uint256 _landId
-    )
-        public
-        onlyRegistrar
-    {
-        // Retrieve sale record
-        Sale storage sale = sales[_landId];
+function approvePayment(
+    uint256 _landId
+)
+    public
+    onlyRegistrar
+{
+    sales[_landId]
+        .paymentApproved = true;
 
-        // Retrieve land record
-        Land storage land = lands[_landId];
+    emit PaymentApproved(
+        _landId
+    );
+}
 
-        // Ensure buyer exists
-        require(
-            sale.buyer != address(0),
-            "No buyer found"
-        );
 
-        // Ensure sale was not already completed
-        require(
-            !sale.completed,
-            "Sale already completed"
-        );
+// =================================================
+// SELLER WITHDRAWS PAYMENT
+// =================================================
 
-        // Mark sale approved and completed
-        sale.approved = true;
-        sale.completed = true;
+function withdrawPayment(
+    uint256 _landId
+)
+    public
+{
+    Sale storage sale =
+        sales[_landId];
 
-        // Save previous owner
-        address oldOwner = land.owner;
+    require(
+        msg.sender ==
+        sale.seller,
+        "Not seller"
+    );
 
-        // Transfer ownership
-        land.owner = sale.buyer;
+    require(
+        sale.paymentApproved,
+        "Payment not approved"
+    );
 
-        // Remove land from marketplace
-        land.forSale = false;
+    require(
+        !sale.sellerPaid,
+        "Already paid"
+    );
 
-        // Release escrow payment to seller
-        payable(sale.seller).transfer(
-            sale.amountPaid
-        );
+    sale.sellerPaid = true;
 
-        // Generate transaction ID
-        transactionCounter++;
+    payable(
+        sale.seller
+    ).transfer(
+        sale.amountPaid
+    );
 
-        // Store transaction history
-        transactionHistory.push(
-            TransactionHistory({
-                transactionId: transactionCounter,
-                landId: _landId,
-                previousOwner: oldOwner,
-                newOwner: sale.buyer,
-                salePrice: sale.amountPaid,
-                timestamp: block.timestamp
-            })
-        );
+    emit SellerPaid(
+        _landId,
+        sale.amountPaid
+    );
+}
 
-        // Emit approval event
-        emit SaleApproved(_landId);
 
-        // Emit ownership transfer event
-        emit OwnershipTransferred(
-            _landId,
-            oldOwner,
-            sale.buyer
-        );
-    }
+// =================================================
+// TRANSFER OWNERSHIP
+// =================================================
 
-    // Retrieve land details by ID
-    function getLand(
-        uint256 _landId
-    )
-        public
-        view
-        returns (Land memory)
-    {
-        return lands[_landId];
-    }
+function transferOwnership(
+    uint256 _landId
+)
+    public
+    onlyRegistrar
+{
+    Sale storage sale =
+        sales[_landId];
 
-    // Retrieve sale details by land ID
-    function getSale(
-        uint256 _landId
-    )
-        public
-        view
-        returns (Sale memory)
-    {
-        return sales[_landId];
-    }
+    Land storage land =
+        lands[_landId];
 
-    // Return total number of completed transactions
-    function getTransactionCount()
-        public
-        view
-        returns (uint256)
-    {
-        return transactionHistory.length;
-    }
+    require(
+        sale.paymentApproved,
+        "Payment not approved"
+    );
+
+    require(
+        sale.sellerPaid,
+        "Seller not paid"
+    );
+
+    require(
+        !sale.ownershipTransferred,
+        "Already transferred"
+    );
+
+    address oldOwner =
+        land.owner;
+
+    // Transfer ownership
+
+    land.owner =
+        sale.buyer;
+
+    land.forSale = false;
+
+    sale.ownershipTransferred = true;
+
+    // Create transaction ID
+
+    transactionCounter++;
+
+    // Save transaction in LandHistory
+
+    historyContract.addRecord(
+        transactionCounter,
+        _landId,
+        oldOwner,
+        sale.buyer,
+        sale.amountPaid
+    );
+
+    emit OwnershipTransferred(
+        _landId,
+        oldOwner,
+        sale.buyer
+    );
+}
+
+
+// =================================================
+// GET LAND DETAILS
+// =================================================
+
+function getLand(
+    uint256 _landId
+)
+    public
+    view
+    returns (Land memory)
+{
+    return lands[_landId];
+}
+
+
+// =================================================
+// GET SALE DETAILS
+// =================================================
+
+function getSale(
+    uint256 _landId
+)
+    public
+    view
+    returns (Sale memory)
+{
+    return sales[_landId];
+}
+
+
+// =================================================
+// GET TRANSACTION COUNT
+// =================================================
+
+function getTransactionCount()
+    public
+    view
+    returns (uint256)
+{
+    return transactionCounter;
+}
+
+
 }

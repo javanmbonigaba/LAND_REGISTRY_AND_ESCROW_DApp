@@ -2,9 +2,47 @@
   "_format": "hh-sol-cache-2",
   "files": {
     "C:\\Users\\user\\Desktop\\LAND_REGISTRY_AND_ESCROW_DApp\\contracts\\LandSaleEscrow.sol": {
-      "lastModificationDate": 1781681247313,
-      "contentHash": "1adcbdd343cb33cd3930dac0fd98600a",
+      "lastModificationDate": 1781790137849,
+      "contentHash": "bac4aca204e6ba458f495d99f4ee6d46",
       "sourceName": "contracts/LandSaleEscrow.sol",
+      "solcConfig": {
+        "version": "0.8.28",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./LandHistory.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.28"
+      ],
+      "artifacts": [
+        "LandSaleEscrow"
+      ]
+    },
+    "C:\\Users\\user\\Desktop\\LAND_REGISTRY_AND_ESCROW_DApp\\contracts\\LandHistory.sol": {
+      "lastModificationDate": 1781790219685,
+      "contentHash": "bb94226d517304453d460a9219d2f59c",
+      "sourceName": "contracts/LandHistory.sol",
       "solcConfig": {
         "version": "0.8.28",
         "settings": {
@@ -34,7 +72,7 @@
         "^0.8.28"
       ],
       "artifacts": [
-        "LandSaleEscrow"
+        "LandHistory"
       ]
     }
   }

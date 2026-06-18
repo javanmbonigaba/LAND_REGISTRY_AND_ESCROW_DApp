@@ -1,115 +1,470 @@
-// Import Chai assertion library
-// Used to verify expected results in tests
+// ==========================================================
+// IMPORT LIBRARIES
+// ==========================================================
+
+// Chai assertion library
+// Used for comparing expected and actual values
 const { expect } = require("chai");
 
-// Import Hardhat's ethers library
-// Used to deploy contracts and interact with them
+// Hardhat Ethers library
+// Used for deploying and interacting with contracts
 const { ethers } = require("hardhat");
 
-// Test suite for the LandSaleEscrow contract
-describe("LandSaleEscrow", function () {
+// ==========================================================
+// TEST SUITE
+// ==========================================================
 
-  // Variables that will be used across all tests
-  let contract;
-  let registrar;
-  let seller;
-  let buyer;
+describe("LandSaleEscrow + LandHistory", function () {
 
-  // Runs before each test case
-  // Creates a fresh contract deployment every time
-  beforeEach(async function () {
 
-    // Get test accounts provided by Hardhat
-    // Account[0] = registrar (contract deployer)
-    // Account[1] = seller
-    // Account[2] = buyer
+// Contract instances
+let escrow;
+let history;
+
+// Test accounts
+let registrar;
+let seller;
+let buyer;
+
+
+// ======================================================
+// BEFORE EACH TEST
+// ======================================================
+// Runs before every test case
+
+beforeEach(async function () {
+
+    // Get test blockchain accounts
     [registrar, seller, buyer] =
-      await ethers.getSigners();
+        await ethers.getSigners();
 
-    // Get the contract factory
-    // Factory is used to deploy new contract instances
+    // Deploy Escrow Contract
+
     const LandSaleEscrow =
-      await ethers.getContractFactory(
-        "LandSaleEscrow"
-      );
+        await ethers.getContractFactory(
+            "LandSaleEscrow"
+        );
 
-    // Deploy the smart contract
-    // The deployer becomes the registrar because
-    // constructor sets registrar = msg.sender
-    contract =
-      await LandSaleEscrow.deploy();
-  });
+    escrow =
+        await LandSaleEscrow.deploy();
 
-  // Test Case 1:
-  // Verify that land registration works correctly
-  it("Should register land", async function () {
+    // Get address of automatically deployed
+    // LandHistory contract
 
-    // Seller registers a land
-    await contract.connect(seller)
-      .registerLand(
-        "Musanze",                 // location
-        500,                       // area
-        ethers.parseEther("1")     // price = 1 ETH
-      );
+    const historyAddress =
+        await escrow.historyContract();
 
-    // Retrieve land information using land ID = 1
+    // Connect to LandHistory
+
+    history =
+        await ethers.getContractAt(
+            "LandHistory",
+            historyAddress
+        );
+
+    console.log("\n================================");
+    console.log("Contracts Deployed");
+    console.log("Escrow:", await escrow.getAddress());
+    console.log("History:", historyAddress);
+    console.log("Registrar:", registrar.address);
+    console.log("Seller:", seller.address);
+    console.log("Buyer:", buyer.address);
+    console.log("================================\n");
+});
+
+
+// ======================================================
+// TEST 1
+// Register Land
+// ======================================================
+
+it("Seller registers land", async function () {
+
+    await escrow.connect(seller)
+        .registerLand(
+            "Musanze",
+            500,
+            ethers.parseEther("1")
+        );
+
     const land =
-      await contract.getLand(1);
+        await escrow.getLand(1);
 
-    // Verify that the land owner is the seller
+    console.log("Land Registered");
+    console.log("Location:", land.location);
+    console.log("Owner:", land.owner);
+
     expect(
-      land.owner
-    ).to.equal(seller.address);
-  });
+        land.owner
+    ).to.equal(
+        seller.address
+    );
+});
 
-  // Test Case 2:
-  // Verify the complete land sale process
-  it("Should complete land sale", async function () {
 
-    // Step 1:
-    // Seller registers a land
-    await contract.connect(seller)
-      .registerLand(
-        "Musanze",
-        500,
-        ethers.parseEther("1")
-      );
+// ======================================================
+// TEST 2
+// Registrar Approves Registration
+// ======================================================
 
-    // Step 2:
-    // Seller lists the land for sale
-    await contract.connect(seller)
-      .listLandForSale(
-        1,                         // Land ID
-        ethers.parseEther("1")     // Selling price
-      );
+it("Registrar approves registration", async function () {
 
-    // Step 3:
-    // Buyer purchases the land
-    // Sends exactly 1 ETH to the contract
-    await contract.connect(buyer)
-      .buyLand(
-        1,
-        {
-          value:
-          ethers.parseEther("1")
-        }
-      );
+    await escrow.connect(seller)
+        .registerLand(
+            "Musanze",
+            500,
+            ethers.parseEther("1")
+        );
 
-    // Step 4:
-    // Registrar approves the sale
-    // This transfers ownership and releases payment
-    await contract
-      .approveSale(1);
+    await escrow
+        .approveLandRegistration(1);
 
-    // Step 5:
-    // Retrieve updated land information
     const land =
-      await contract.getLand(1);
+        await escrow.getLand(1);
 
-    // Verify ownership changed from seller to buyer
+    console.log(
+        "Approved:",
+        land.approved
+    );
+
     expect(
-      land.owner
-    ).to.equal(buyer.address);
-  });
+        land.approved
+    ).to.equal(true);
+});
+
+
+// ======================================================
+// TEST 3
+// Prevent Duplicate Registration
+// ======================================================
+
+it("Cannot register same land twice", async function () {
+
+    await escrow.connect(seller)
+        .registerLand(
+            "Musanze",
+            500,
+            ethers.parseEther("1")
+        );
+
+    await expect(
+
+        escrow.connect(seller)
+            .registerLand(
+                "Musanze",
+                500,
+                ethers.parseEther("1")
+            )
+
+    ).to.be.revertedWith(
+        "Land already registered"
+    );
+});
+
+
+// ======================================================
+// TEST 4
+// Register Multiple Lands
+// ======================================================
+
+it("Seller registers second land", async function () {
+
+    await escrow.connect(seller)
+        .registerLand(
+            "Musanze",
+            500,
+            ethers.parseEther("1")
+        );
+
+    await escrow.connect(seller)
+        .registerLand(
+            "Kigali",
+            1000,
+            ethers.parseEther("2")
+        );
+
+    const land2 =
+        await escrow.getLand(2);
+
+    expect(
+        land2.location
+    ).to.equal(
+        "Kigali"
+    );
+});
+
+
+// ======================================================
+// TEST 5
+// List Land For Sale
+// ======================================================
+
+it("Seller lists approved land", async function () {
+
+    await escrow.connect(seller)
+        .registerLand(
+            "Musanze",
+            500,
+            ethers.parseEther("1")
+        );
+
+    await escrow
+        .approveLandRegistration(1);
+
+    await escrow.connect(seller)
+        .listLandForSale(
+            1,
+            ethers.parseEther("2")
+        );
+
+    const land =
+        await escrow.getLand(1);
+
+    expect(
+        land.forSale
+    ).to.equal(true);
+});
+
+
+// ======================================================
+// TEST 6
+// Buyer Pays For Land
+// ======================================================
+
+it("Buyer deposits payment", async function () {
+
+    await escrow.connect(seller)
+        .registerLand(
+            "Musanze",
+            500,
+            ethers.parseEther("1")
+        );
+
+    await escrow
+        .approveLandRegistration(1);
+
+    await escrow.connect(seller)
+        .listLandForSale(
+            1,
+            ethers.parseEther("1")
+        );
+
+    await escrow.connect(buyer)
+        .buyLand(
+            1,
+            {
+                value:
+                ethers.parseEther("1")
+            }
+        );
+
+    const sale =
+        await escrow.getSale(1);
+
+    expect(
+        sale.buyer
+    ).to.equal(
+        buyer.address
+    );
+});
+
+
+// ======================================================
+// TEST 7
+// Registrar Approves Payment
+// ======================================================
+
+it("Registrar approves payment", async function () {
+
+    await escrow.connect(seller)
+        .registerLand(
+            "Musanze",
+            500,
+            ethers.parseEther("1")
+        );
+
+    await escrow
+        .approveLandRegistration(1);
+
+    await escrow.connect(seller)
+        .listLandForSale(
+            1,
+            ethers.parseEther("1")
+        );
+
+    await escrow.connect(buyer)
+        .buyLand(
+            1,
+            {
+                value:
+                ethers.parseEther("1")
+            }
+        );
+
+    await escrow
+        .approvePayment(1);
+
+    const sale =
+        await escrow.getSale(1);
+
+    expect(
+        sale.paymentApproved
+    ).to.equal(true);
+});
+
+
+// ======================================================
+// TEST 8
+// Seller Withdraws Payment
+// ======================================================
+
+it("Seller withdraws payment", async function () {
+
+    await escrow.connect(seller)
+        .registerLand(
+            "Musanze",
+            500,
+            ethers.parseEther("1")
+        );
+
+    await escrow
+        .approveLandRegistration(1);
+
+    await escrow.connect(seller)
+        .listLandForSale(
+            1,
+            ethers.parseEther("1")
+        );
+
+    await escrow.connect(buyer)
+        .buyLand(
+            1,
+            {
+                value:
+                ethers.parseEther("1")
+            }
+        );
+
+    await escrow
+        .approvePayment(1);
+
+    await escrow.connect(seller)
+        .withdrawPayment(1);
+
+    const sale =
+        await escrow.getSale(1);
+
+    expect(
+        sale.sellerPaid
+    ).to.equal(true);
+});
+
+
+// ======================================================
+// TEST 9
+// Transfer Ownership
+// ======================================================
+
+it("Registrar transfers ownership", async function () {
+
+    await escrow.connect(seller)
+        .registerLand(
+            "Musanze",
+            500,
+            ethers.parseEther("1")
+        );
+
+    await escrow
+        .approveLandRegistration(1);
+
+    await escrow.connect(seller)
+        .listLandForSale(
+            1,
+            ethers.parseEther("1")
+        );
+
+    await escrow.connect(buyer)
+        .buyLand(
+            1,
+            {
+                value:
+                ethers.parseEther("1")
+            }
+        );
+
+    await escrow
+        .approvePayment(1);
+
+    await escrow.connect(seller)
+        .withdrawPayment(1);
+
+    await escrow
+        .transferOwnership(1);
+
+    const land =
+        await escrow.getLand(1);
+
+    expect(
+        land.owner
+    ).to.equal(
+        buyer.address
+    );
+});
+
+
+// ======================================================
+// TEST 10
+// Verify History Contract Records
+// ======================================================
+
+it("Stores completed transaction in LandHistory", async function () {
+
+    await escrow.connect(seller)
+        .registerLand(
+            "Musanze",
+            500,
+            ethers.parseEther("1")
+        );
+
+    await escrow
+        .approveLandRegistration(1);
+
+    await escrow.connect(seller)
+        .listLandForSale(
+            1,
+            ethers.parseEther("1")
+        );
+
+    await escrow.connect(buyer)
+        .buyLand(
+            1,
+            {
+                value:
+                ethers.parseEther("1")
+            }
+        );
+
+    await escrow
+        .approvePayment(1);
+
+    await escrow.connect(seller)
+        .withdrawPayment(1);
+
+    await escrow
+        .transferOwnership(1);
+
+    const count =
+        await history.getRecordCount();
+
+    console.log(
+        "History Records:",
+        count.toString()
+    );
+
+    expect(
+        count
+    ).to.equal(1);
+});
+
 
 });
